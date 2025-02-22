@@ -10,18 +10,14 @@
 #include <sys/ipc.h>
 #include <sys/msg.h>
 
-#define CMD_TIMEOUT 3  // 3-second timeout
-#define MAX_CLIENTS 10
-#define MSG_QUEUE_KEY 1234
-#define MAX_MSG_LEN 256
-
 client_info clients[MAX_CLIENTS];
 int client_count = 0;
-int msgid;
-
+int msgid = -1;
+int running = 1;
 
 void handle_signal(int sig) {
     printf("\nServer shutting down...\n");
+    running = 0;
 
     if (msgid != -1) {  // Only try to send SHUTDOWN if queue exists
         msg_buffer shutdown_msg;
@@ -38,7 +34,6 @@ void handle_signal(int sig) {
 
     exit(0);
 }
-
 
 void execute_shell_command(char *command) {
     if (command == NULL || strlen(command) == 0) {
@@ -68,18 +63,19 @@ void execute_shell_command(char *command) {
     }
 }
 
-
 void *client_handler(void *arg) {
     msg_buffer msg;
 
-    while (1) {
+    while (running) {
         if (msgid == -1) {
             printf("Message queue deleted. Exiting handler.\n");
             pthread_exit(NULL);
         }
 
         if (msgrcv(msgid, &msg, sizeof(msg) - sizeof(long), 1, 0) == -1) {
-            perror("msgrcv failed");
+            if (running) {
+                perror("msgrcv failed");
+            }
             continue;
         }
 
@@ -144,11 +140,6 @@ void *client_handler(void *arg) {
         
             pthread_exit(NULL);
         }
-        else if (strncmp(msg.msg_text, "SHUTDOWN", 8) == 0) {
-            printf("Server received SHUTDOWN command. Stopping...\n");
-            handle_signal(SIGINT);
-            break;
-        } 
 
         if (strncmp(msg.msg_text, "LIST", 4) == 0) {
             char response[256] = "Connected clients: ";
@@ -207,12 +198,13 @@ void *client_handler(void *arg) {
         }
 
         if (msgsnd(msgid, &msg, sizeof(msg) - sizeof(long), 0) == -1) {
-            perror("msgsnd failed");
+            if (running) {
+                perror("msgsnd failed");
+            }
         }
     }
     return NULL;
 }
-
 
 void start_server(void) {
     signal(SIGINT, handle_signal);
@@ -227,15 +219,12 @@ void start_server(void) {
     pthread_create(&thread, NULL, client_handler, NULL);
     pthread_detach(thread);
 
-    while (1) {
+    while (running) {
         sleep(1);
     }
 }
-
 
 int main() {
     start_server();
     return 0;
 }
-
-
